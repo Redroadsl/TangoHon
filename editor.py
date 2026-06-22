@@ -48,6 +48,13 @@ class TangoEditor:
         self._edit_col_idx = None
         self._edit_iid = None
 
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self._dragging = False
+        self._press_selection = ()
+        self._press_iid = None
+        self._press_col_idx = None
+
         logger.info("単語帳管理ツールを起動しました")
         self._build_ui()
         self.refresh_file_list()
@@ -98,8 +105,11 @@ class TangoEditor:
         self.file_listbox = tk.Listbox(left_frame, activestyle="none", exportselection=False,
                                        font=Font(family="Consolas", size=10))
         self.file_listbox.pack(fill=tk.BOTH, expand=True)
-        self.file_listbox.bind("<<ListboxSelect>>", self.on_file_select)
+        self.file_listbox.bind("<Double-Button-1>", self.on_file_select)
         self.file_listbox.bind("<Button-3>", self.show_file_context_menu)
+        self.file_listbox.bind("<Button-1>", self._on_file_press)
+        self.file_listbox.bind("<B1-Motion>", self._on_file_drag)
+        self.file_listbox.bind("<ButtonRelease-1>", self._on_file_release)
 
         self.file_context_menu = tk.Menu(self.root, tearoff=0)
         self.file_context_menu.add_command(label="新規作成", command=self.create_file)
@@ -152,6 +162,8 @@ class TangoEditor:
         hsb.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.tree.bind("<Button-1>", self.on_tree_click)
+        self.tree.bind("<B1-Motion>", self._on_drag_motion)
+        self.tree.bind("<ButtonRelease-1>", self._on_drag_release)
         self.tree.bind("<Delete>", lambda e: self.delete_word())
         self.tree.tag_configure("even", background="#f5f5f5")
 
@@ -226,6 +238,13 @@ class TangoEditor:
     def on_tree_click(self, event):
         self._destroy_edit()
 
+        self._drag_start_x = event.x
+        self._drag_start_y = event.y
+        self._dragging = False
+        self._press_selection = self.tree.selection()
+        self._press_iid = None
+        self._press_col_idx = None
+
         region = self.tree.identify_region(event.x, event.y)
         if region != "cell":
             return
@@ -237,14 +256,51 @@ class TangoEditor:
         if col_name == "index":
             return
 
-        if iid in self.tree.selection():
-            col_idx = COL_MAP.get(col_name)
-            if col_idx is None:
-                return
-            data_idx = int(iid)
-            if data_idx < 0 or data_idx >= len(self.data):
-                return
-            self._start_edit(data_idx, col_idx)
+        self._press_iid = iid
+        col_idx = COL_MAP.get(col_name)
+        self._press_col_idx = col_idx if col_idx is not None else None
+        return "break"
+
+    def _on_drag_motion(self, event):
+        dx = event.x - self._drag_start_x
+        dy = event.y - self._drag_start_y
+        if abs(dx) > 10 or abs(dy) > 10:
+            if not self._dragging:
+                self._dragging = True
+            if abs(dy) > abs(dx):
+                self.tree.yview("scroll", int(-dy / 25), "units")
+            else:
+                self.tree.xview("scroll", int(-dx / 25), "units")
+
+    def _on_drag_release(self, event):
+        if not self._dragging and self._press_iid is not None:
+            self.tree.selection_set(self._press_iid)
+            self.tree.focus(self._press_iid)
+            if self._press_col_idx is not None and self._press_iid in self._press_selection:
+                data_idx = int(self._press_iid)
+                if 0 <= data_idx < len(self.data):
+                    self._start_edit(data_idx, self._press_col_idx)
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self._dragging = False
+        self._press_iid = None
+        self._press_col_idx = None
+        self._press_selection = ()
+
+    def _on_file_press(self, event):
+        self._drag_start_x = event.x
+        self._drag_start_y = event.y
+        self._dragging = False
+
+    def _on_file_drag(self, event):
+        dy = event.y - self._drag_start_y
+        if abs(dy) > 10:
+            if not self._dragging:
+                self._dragging = True
+            self.file_listbox.yview("scroll", int(-dy / 25), "units")
+
+    def _on_file_release(self, event):
+        self._dragging = False
 
 
     def _destroy_edit(self, event=None):
