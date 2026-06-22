@@ -51,6 +51,8 @@ class TangoEditor:
         self._drag_start_x = 0
         self._drag_start_y = 0
         self._dragging = False
+        self._scroll_accum_y = 0
+        self._scroll_accum_x = 0
         self._press_selection = ()
         self._press_iid = None
         self._press_col_idx = None
@@ -267,10 +269,16 @@ class TangoEditor:
         if abs(dx) > 10 or abs(dy) > 10:
             if not self._dragging:
                 self._dragging = True
-            if abs(dy) > abs(dx):
-                self.tree.yview("scroll", int(-dy / 25), "units")
-            else:
-                self.tree.xview("scroll", int(-dx / 25), "units")
+            target_y = int(-dy / 26)
+            delta_y = target_y - self._scroll_accum_y
+            if delta_y:
+                self.tree.yview("scroll", delta_y, "units")
+                self._scroll_accum_y = target_y
+            target_x = int(-dx / 26)
+            delta_x = target_x - self._scroll_accum_x
+            if delta_x:
+                self.tree.xview("scroll", delta_x, "units")
+                self._scroll_accum_x = target_x
 
     def _on_drag_release(self, event):
         if not self._dragging and self._press_iid is not None:
@@ -283,6 +291,8 @@ class TangoEditor:
         self._drag_start_x = 0
         self._drag_start_y = 0
         self._dragging = False
+        self._scroll_accum_y = 0
+        self._scroll_accum_x = 0
         self._press_iid = None
         self._press_col_idx = None
         self._press_selection = ()
@@ -297,10 +307,15 @@ class TangoEditor:
         if abs(dy) > 10:
             if not self._dragging:
                 self._dragging = True
-            self.file_listbox.yview("scroll", int(-dy / 25), "units")
+            target = int(-dy / 16)
+            delta = target - self._scroll_accum_y
+            if delta:
+                self.file_listbox.yview("scroll", delta, "units")
+                self._scroll_accum_y = target
 
     def _on_file_release(self, event):
         self._dragging = False
+        self._scroll_accum_y = 0
 
 
     def _destroy_edit(self, event=None):
