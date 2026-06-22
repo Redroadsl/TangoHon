@@ -1,0 +1,6 @@
+*.csv
+*.CSV
+*.cmd
+*.CMD
+/.unused
+/__pycache__
