@@ -31,8 +31,8 @@ class TangoEditor:
         self._undoing = False
         self._sort_reverse = False
         self.search_var = tk.StringVar()
-        self.search_var.trace("w", lambda *_: self.apply_filter())
-        self.encoding.trace("w", lambda *_: self._update_status())
+        self.search_var.trace_add("write", lambda *_: self.apply_filter())
+        self.encoding.trace_add("write", lambda *_: self._update_status())
 
         self._edit_entry = None
         self._edit_data_idx = None
