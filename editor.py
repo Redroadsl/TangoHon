@@ -193,6 +193,8 @@ class TangoEditor:
     def _ensure_trailing_empty(self):
         if not self.data or any(self.data[-1]):
             self.data.append(["", "", "", "", ""])
+            return True
+        return False
 
     def _data_idx(self, row):
         for i, r in enumerate(self.data):
@@ -276,8 +278,10 @@ class TangoEditor:
                 if new_text != old_text:
                     self._push_undo()
                     self.data[self._edit_data_idx][self._edit_col_idx] = new_text
-                    self._ensure_trailing_empty()
+                    added = self._ensure_trailing_empty()
                     self._refresh_single_row(self._edit_data_idx)
+                    if added:
+                        self.apply_filter()
                     logger.info("セル編集: %s[%s] = '%s' -> '%s'",
                                 COL_NAMES[self._edit_col_idx], self._edit_data_idx,
                                 old_text, new_text)
@@ -305,6 +309,14 @@ class TangoEditor:
                     self.tree.selection_set(str(next_data_idx))
                     self.tree.see(str(next_data_idx))
                     self._start_edit(next_data_idx, col_idx)
+                else:
+                    self.apply_filter()
+                    if self.filtered:
+                        next_data_idx = self._data_idx(self.filtered[-1])
+                        if next_data_idx != data_idx:
+                            self.tree.selection_set(str(next_data_idx))
+                            self.tree.see(str(next_data_idx))
+                            self._start_edit(next_data_idx, col_idx)
                 break
         return "break"
 
