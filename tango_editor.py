@@ -1,9 +1,18 @@
 import os
 import csv
 import copy
+import logging
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from tkinter.font import Font
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("tango_editor")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 COL_MAP = {"kanji": 0, "kana": 1, "trans": 2, "pos": 3, "phrase": 4}
@@ -39,6 +48,7 @@ class TangoEditor:
         self._edit_col_idx = None
         self._edit_iid = None
 
+        logger.info("単語帳管理ツールを起動しました")
         self._build_ui()
         self.refresh_file_list()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -208,6 +218,7 @@ class TangoEditor:
         self._ensure_trailing_empty()
         self.apply_filter()
         self._update_status()
+        logger.info("元に戻すを実行しました（残り%s回）", len(self._undo_stack))
 
     # ═══════════════════════ Inline editing ═══════════════════════
 
@@ -267,6 +278,9 @@ class TangoEditor:
                     self.data[self._edit_data_idx][self._edit_col_idx] = new_text
                     self._ensure_trailing_empty()
                     self._refresh_single_row(self._edit_data_idx)
+                    logger.info("セル編集: %s[%s] = '%s' -> '%s'",
+                                COL_NAMES[self._edit_col_idx], self._edit_data_idx,
+                                old_text, new_text)
                 self._edit_data_idx = None
                 self._edit_col_idx = None
                 self._edit_iid = None
@@ -339,6 +353,7 @@ class TangoEditor:
         for f in self.csv_files():
             self.file_listbox.insert(tk.END, f)
         self._update_status()
+        logger.info("ファイル一覧を更新しました（%d 件）", len(self.csv_files()))
 
     def create_file(self):
         name = simpledialog.askstring("新規作成", "ファイル名（例: 301）:", parent=self.root)
@@ -355,7 +370,9 @@ class TangoEditor:
                 pass
             self.refresh_file_list()
             self.status_var.set(f"作成しました: {name}")
+            logger.info("ファイルを作成しました: %s", name)
         except Exception as e:
+            logger.error("ファイル作成エラー: %s", e)
             messagebox.showerror("エラー", str(e))
 
     def show_file_context_menu(self, event):
@@ -386,7 +403,9 @@ class TangoEditor:
             if self.current_file == old_name:
                 self.current_file = new_name
             self.refresh_file_list()
+            logger.info("ファイル名変更: %s -> %s", old_name, new_name)
         except Exception as e:
+            logger.error("ファイル名変更エラー: %s", e)
             messagebox.showerror("エラー", str(e))
 
     def delete_file(self):
@@ -404,7 +423,9 @@ class TangoEditor:
                 self._saved_state = None
                 self.apply_filter()
             self.refresh_file_list()
+            logger.info("ファイルを削除しました: %s", fname)
         except Exception as e:
+            logger.error("ファイル削除エラー: %s", e)
             messagebox.showerror("エラー", str(e))
 
     # ═══════════════════════ File I/O ═══════════════════════
@@ -423,6 +444,7 @@ class TangoEditor:
     def load_file(self, fname):
         path = os.path.join(BASE_DIR, fname)
         self.current_file = fname
+        logger.info("ファイルを読み込み中: %s", fname)
         encodings_to_try = list(dict.fromkeys([self.encoding.get(), "utf-8", "gbk", "cp932", "euc-jp"]))
         self.data.clear()
         self._undo_stack.clear()
@@ -453,12 +475,14 @@ class TangoEditor:
                 break
         else:
             if last_error:
+                logger.error("ファイル読込エラー: %s - %s", path, last_error)
                 messagebox.showerror("読込エラー", f"{path}\n{last_error}")
             self.data.clear()
         self._ensure_trailing_empty()
         self._saved_state = copy.deepcopy(self.data)
         self.apply_filter()
         self._update_status()
+        logger.info("ファイル読込完了: %s (%d 語, encoding=%s)", fname, len(self.data), self.encoding.get())
 
     def save_file(self):
         if not self.current_file:
@@ -466,6 +490,7 @@ class TangoEditor:
             return
         path = os.path.join(BASE_DIR, self.current_file)
         enc = self.encoding.get()
+        logger.info("ファイルを保存中: %s (encoding=%s)", self.current_file, enc)
         try:
             rows_to_save = [row for row in self.data if any(cell.strip() for cell in row)]
             with open(path, "w", encoding=enc, newline="") as f:
@@ -473,8 +498,10 @@ class TangoEditor:
                 writer.writerows(rows_to_save)
             self._saved_state = copy.deepcopy(self.data)
             self._update_status()
+            logger.info("保存完了: %s (%d 語)", self.current_file, len(self.data))
             messagebox.showinfo("保存完了", f"{self.current_file}\n{len(self.data)} 語を保存しました")
         except Exception as e:
+            logger.error("保存エラー: %s", e)
             messagebox.showerror("保存エラー", str(e))
 
     def on_close(self):
@@ -483,6 +510,7 @@ class TangoEditor:
             if messagebox.askyesno("未保存", "変更が保存されていません。保存しますか？"):
                 self.save_file()
         self.root.destroy()
+        logger.info("単語帳管理ツールを終了しました")
 
     # ═══════════════════════ Display ═══════════════════════
 
@@ -563,6 +591,7 @@ class TangoEditor:
             self.tree.selection_set(iid)
             self.tree.see(iid)
         self._update_status()
+        logger.info("単語を追加しました（行 %d）", data_idx)
 
     def delete_word(self):
         self._destroy_edit()
@@ -576,6 +605,7 @@ class TangoEditor:
             self._ensure_trailing_empty()
             self.apply_filter()
             self._update_status()
+            logger.info("単語を削除しました: '%s' / '%s'", row[0], row[1])
 
 
 if __name__ == "__main__":
