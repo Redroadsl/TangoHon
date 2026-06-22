@@ -114,7 +114,7 @@ class TangoEditor:
         toolbar.pack(fill=tk.X, pady=(0, 4))
 
         ttk.Label(toolbar, text="単語一覧", font=Font(weight="bold")).pack(side=tk.LEFT)
-        ttk.Label(toolbar, text="  ダブルクリックで編集 | Enter↓  Tab→", foreground="gray").pack(side=tk.LEFT)
+        ttk.Label(toolbar, text="  クリックで編集 | Enter↓  Tab→", foreground="gray").pack(side=tk.LEFT)
 
         ttk.Button(toolbar, text="保存 (Ctrl+S)", command=self.save_file, width=12).pack(side=tk.RIGHT, padx=(2, 0))
         ttk.Button(toolbar, text="元に戻す", command=self.undo, width=8).pack(side=tk.RIGHT, padx=(2, 0))
@@ -151,7 +151,6 @@ class TangoEditor:
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         hsb.pack(side=tk.BOTTOM, fill=tk.X)
 
-        self.tree.bind("<Double-1>", self.on_cell_double_click)
         self.tree.bind("<Button-1>", self.on_tree_click)
         self.tree.bind("<Delete>", lambda e: self.delete_word())
         self.tree.tag_configure("even", background="#f5f5f5")
@@ -227,9 +226,6 @@ class TangoEditor:
     def on_tree_click(self, event):
         self._destroy_edit()
 
-    def on_cell_double_click(self, event):
-        self._destroy_edit()
-
         region = self.tree.identify_region(event.x, event.y)
         if region != "cell":
             return
@@ -237,38 +233,19 @@ class TangoEditor:
         iid = self.tree.identify_row(event.y)
         if not col_id or not iid:
             return
-
         col_name = self.tree.column(col_id)["id"]
         if col_name == "index":
             return
 
-        col_idx = COL_MAP.get(col_name)
-        if col_idx is None:
-            return
+        if iid in self.tree.selection():
+            col_idx = COL_MAP.get(col_name)
+            if col_idx is None:
+                return
+            data_idx = int(iid)
+            if data_idx < 0 or data_idx >= len(self.data):
+                return
+            self._start_edit(data_idx, col_idx)
 
-        data_idx = int(iid)
-        if data_idx < 0 or data_idx >= len(self.data):
-            return
-
-        x, y, w, h = self.tree.bbox(iid, col_id)
-        if x is None:
-            return
-
-        self._edit_data_idx = data_idx
-        self._edit_col_idx = col_idx
-        self._edit_iid = iid
-
-        entry = ttk.Entry(self.tree, font=Font(family="Consolas", size=10))
-        entry.place(x=x, y=y, width=w, height=h)
-        entry.insert(0, self.data[data_idx][col_idx])
-        entry.select_range(0, tk.END)
-        entry.focus_set()
-
-        entry.bind("<Return>", self._on_enter)
-        entry.bind("<Tab>", self._on_tab)
-        entry.bind("<Escape>", lambda e: self._destroy_edit())
-
-        self._edit_entry = entry
 
     def _destroy_edit(self, event=None):
         if self._edit_entry is not None:
