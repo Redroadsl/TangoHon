@@ -42,6 +42,8 @@ class TangoEditor:
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.apply_filter())
         self.encoding.trace_add("write", lambda *_: self._update_status())
+        self.font_size = tk.IntVar(value=10)
+        self.font_size.trace_add("write", lambda *_: self._update_font_size())
 
         self._edit_entry = None
         self._edit_data_idx = None
@@ -128,6 +130,12 @@ class TangoEditor:
         ttk.Label(toolbar, text="単語一覧", font=Font(weight="bold")).pack(side=tk.LEFT)
         ttk.Label(toolbar, text="  クリックで編集 | Enter↓  Tab→", foreground="gray").pack(side=tk.LEFT)
 
+        ttk.Label(toolbar, text="文字サイズ:").pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Scale(toolbar, from_=8, to=24, variable=self.font_size,
+                  orient=tk.HORIZONTAL, length=60).pack(side=tk.LEFT, padx=(2, 0))
+        self.fs_label = ttk.Label(toolbar, text="10", width=2)
+        self.fs_label.pack(side=tk.LEFT)
+
         ttk.Button(toolbar, text="保存 (Ctrl+S)", command=self.save_file, width=12).pack(side=tk.RIGHT, padx=(2, 0))
         ttk.Button(toolbar, text="元に戻す", command=self.undo, width=8).pack(side=tk.RIGHT, padx=(2, 0))
         ttk.Button(toolbar, text="削除", command=self.delete_word, width=6).pack(side=tk.RIGHT, padx=(2, 0))
@@ -188,6 +196,8 @@ class TangoEditor:
         ttk.Label(status_frame, textvariable=self.enc_status_var,
                   relief=tk.SUNKEN, anchor=tk.E, width=14).pack(side=tk.RIGHT)
 
+        self._update_font_size()
+
     def _update_status(self):
         parts = []
         if self.current_file:
@@ -200,6 +210,15 @@ class TangoEditor:
             parts.append(f"取り消し可能: {undos}回")
         self.status_var.set("  |  ".join(parts))
         self.enc_status_var.set(f"[{self.encoding.get()}]")
+
+    def _update_font_size(self):
+        size = self.font_size.get()
+        style = ttk.Style()
+        style.configure("Treeview", rowheight=max(18, int(size * 2.6)))
+        self.tree.tag_configure("row", font=Font(family="Consolas", size=size))
+        self.fs_label.config(text=str(size))
+        if self._edit_entry is not None:
+            self._destroy_edit()
 
     # ═══════════════════════ Undo ═══════════════════════
 
@@ -392,7 +411,8 @@ class TangoEditor:
         self._edit_col_idx = col_idx
         self._edit_iid = iid
 
-        entry = ttk.Entry(self.tree, font=Font(family="Consolas", size=10))
+        fs = self.font_size.get()
+        entry = ttk.Entry(self.tree, font=Font(family="Consolas", size=fs))
         entry.place(x=x, y=y, width=w, height=h)
         entry.insert(0, self.data[data_idx][col_idx])
         entry.select_range(0, tk.END)
@@ -592,10 +612,12 @@ class TangoEditor:
             self.tree.delete(item)
         for fi, row in enumerate(self.filtered):
             data_idx = self._data_idx(row)
-            tag = "even" if fi % 2 == 0 else ""
+            tags = ["row"]
+            if fi % 2 == 0:
+                tags.append("even")
             self.tree.insert("", tk.END, iid=str(data_idx),
                              values=(str(fi + 1), row[0], row[1], row[2], row[3], row[4]),
-                             tags=(tag,) if tag else ())
+                             tags=tags)
 
     def _refresh_single_row(self, data_idx):
         iid = str(data_idx)
@@ -607,8 +629,11 @@ class TangoEditor:
         if fi is None:
             self.refresh_table()
             return
+        new_tags = ["row"]
+        if fi % 2 == 0:
+            new_tags.append("even")
         self.tree.item(iid, values=(str(fi + 1), row[0], row[1], row[2], row[3], row[4]),
-                       tags=("even",) if fi % 2 == 0 else ())
+                       tags=new_tags)
 
     def sort_by(self, col):
         idx = COL_MAP[col]
