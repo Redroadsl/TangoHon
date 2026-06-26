@@ -43,12 +43,18 @@ class TangoExam:
         self.data = []
         self.exam_map = []
         self.hidden_cols = set()
+        self._selected_hidden_cols = set()
         self.answers = {}
         self.results = {}
 
         self._edit_entry = None
         self._edit_data_idx = None
         self._edit_col_idx = None
+
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self._dragging = False
+        self._scroll_accum_y = 0
 
         self._build_ui()
         self.refresh_file_list()
@@ -92,11 +98,12 @@ class TangoExam:
         toolbar.pack(fill=tk.X, pady=(0, 4))
 
         ttk.Label(toolbar, text="単語一覧", font=Font(weight="bold")).pack(side=tk.LEFT)
-        ttk.Label(toolbar, text="  出題中は空欄をクリックして入力", foreground="gray").pack(side=tk.LEFT)
+        self.hint_var = tk.StringVar(value="ヘッダーをクリックして隠す列を選択")
+        ttk.Label(toolbar, textvariable=self.hint_var, foreground="gray").pack(side=tk.LEFT, padx=(6, 0))
 
         self.btn_reset = ttk.Button(toolbar, text="リセット", command=self.reset_exam, width=8, state=tk.DISABLED)
         self.btn_reset.pack(side=tk.RIGHT, padx=(2, 0))
-        self.btn_exam = ttk.Button(toolbar, text="出題設定", command=self.show_exam_dialog, width=10, state=tk.DISABLED)
+        self.btn_exam = ttk.Button(toolbar, text="出題開始", command=self.start_exam_from_selection, width=10, state=tk.DISABLED)
         self.btn_exam.pack(side=tk.RIGHT, padx=(2, 0))
 
         # ── Canvas table ──
@@ -113,8 +120,14 @@ class TangoExam:
         self.vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.hsb.pack(side=tk.BOTTOM, fill=tk.X)
 
-        self.canvas.bind("<Button-1>", self._on_canvas_click)
+        self.canvas.bind("<Button-1>", self._on_canvas_press)
+        self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.root.bind("<Button-1>", self._on_any_click, "+")
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind("<Button-4>", lambda e: self.canvas.yview("scroll", -3, "units"))
+        self.canvas.bind("<Button-5>", lambda e: self.canvas.yview("scroll", 3, "units"))
 
         self._total_w = sum(COL_WIDTHS.values())
         self._cell_font = Font(family="Consolas", size=10)
@@ -177,7 +190,11 @@ class TangoExam:
                 pct = correct / answered * 100
                 parts.append(f"正解: {correct}/{answered}（{pct:.1f}%）")
         else:
-            parts.append("待機中")
+            if self._selected_hidden_cols:
+                names = [COL_LABELS[COL_NAMES[c]] for c in sorted(self._selected_hidden_cols)]
+                parts.append(f"隠す列: {', '.join(names)}（ヘッダーをクリックして変更）")
+            else:
+                parts.append("待機中")
         self.status_var.set("  |  ".join(parts))
         self.enc_status_var.set(f"[{self.encoding.get()}]")
 
@@ -239,51 +256,30 @@ class TangoExam:
         self.original_data = copy.deepcopy(self.flat_data)
         self.data = [row[:] for row in self.flat_data]
         self.hidden_cols = set()
+        self._selected_hidden_cols.clear()
         self.answers.clear()
         self.results.clear()
         self.exam_map = list(range(len(self.flat_data)))
-        self.btn_exam.config(state=tk.NORMAL if self.flat_data else tk.DISABLED)
+        self.btn_exam.config(state=tk.DISABLED)
         self.btn_reset.config(state=tk.DISABLED)
+        self.hint_var.set("ヘッダーをクリックして隠す列を選択")
         self._redraw()
         self._update_status()
         logger.info("ファイル読込完了: %s (%d 語, encoding=%s)", fname, len(self.flat_data), self.encoding.get())
 
     # ═══════════════════════ Exam ═══════════════════════
 
-    def show_exam_dialog(self):
+    def start_exam_from_selection(self):
         if not self.flat_data:
             messagebox.showinfo("確認", "ファイルを先に開いてください")
             return
-
-        dialog = tk.Toplevel(self.root)
-        dialog.title("出題設定")
-        dialog.geometry("320x280")
-        dialog.resizable(False, False)
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        ttk.Label(dialog, text="隠す列を選択してください（少なくとも1つ）:",
-                  font=Font(weight="bold")).pack(pady=(12, 6))
-
-        vars = {}
-        for cn in COL_NAMES:
-            var = tk.BooleanVar(value=False)
-            cb = ttk.Checkbutton(dialog, text=f"{COL_LABELS[cn]}（{cn}）", variable=var)
-            cb.pack(anchor=tk.W, padx=30, pady=3)
-            vars[cn] = var
-
-        def on_start():
-            selected = [i for i, cn in enumerate(COL_NAMES) if vars[cn].get()]
-            if not selected:
-                messagebox.showwarning("警告", "少なくとも1つの列を選択してください", parent=dialog)
-                return
-            if len(selected) >= len(COL_NAMES):
-                messagebox.showwarning("警告", "すべての列を隠すことはできません", parent=dialog)
-                return
-            dialog.destroy()
-            self.start_exam(set(selected))
-
-        ttk.Button(dialog, text="出題開始", command=on_start, width=12).pack(pady=(15, 5))
+        if not self._selected_hidden_cols:
+            messagebox.showwarning("警告", "隠す列を選択してください（表のヘッダーをクリック）")
+            return
+        if len(self._selected_hidden_cols) >= len(COL_NAMES):
+            messagebox.showwarning("警告", "すべての列を隠すことはできません")
+            return
+        self.start_exam(set(self._selected_hidden_cols))
 
     def start_exam(self, hidden_cols):
         self.hidden_cols = hidden_cols
@@ -301,7 +297,10 @@ class TangoExam:
                 row[ci] = ""
             self.data.append(row)
 
+        self._selected_hidden_cols.clear()
         self.btn_reset.config(state=tk.NORMAL)
+        self.btn_exam.config(state=tk.DISABLED)
+        self.hint_var.set("空欄をクリックして入力  |  Enter↓  Tab→")
         self._redraw()
         self._update_status()
         logger.info("試験開始: %d 語, 隠し列=%s", len(self.data),
@@ -310,14 +309,16 @@ class TangoExam:
     def reset_exam(self):
         self._destroy_edit()
         self.hidden_cols = set()
+        self._selected_hidden_cols.clear()
         self.answers.clear()
         self.results.clear()
         self.data = [row[:] for row in self.flat_data]
         self.exam_map = list(range(len(self.flat_data)))
         self.btn_reset.config(state=tk.DISABLED)
+        self.btn_exam.config(state=tk.DISABLED)
+        self.hint_var.set("ヘッダーをクリックして隠す列を選択")
         self._redraw()
         self._update_status()
-        self.show_exam_dialog()
         logger.info("試験をリセットしました")
 
     # ═══════════════════════ Canvas drawing ═══════════════════════
@@ -333,8 +334,11 @@ class TangoExam:
         x = 0
         header_labels = ["#", "漢字", "仮名", "翻訳", "詞性", "短语"]
         for i, (cn, w) in enumerate(COL_WIDTHS.items()):
+            ci = COL_MAP.get(cn)
+            selected = not self.hidden_cols and ci is not None and ci in self._selected_hidden_cols
+            h_bg = "#aaddff" if selected else "#e8e8e8"
             self.canvas.create_rectangle(x, 0, x + w, HEADER_H,
-                                         fill="#e8e8e8", outline="#ccc")
+                                         fill=h_bg, outline="#ccc")
             self.canvas.create_text(x + w / 2, HEADER_H / 2, anchor=tk.CENTER,
                                     text=header_labels[i], font=Font(size=10, weight="bold"))
             x += w
@@ -370,15 +374,64 @@ class TangoExam:
 
     # ═══════════════════════ Canvas click ═══════════════════════
 
-    def _on_canvas_click(self, event):
+    def _on_any_click(self, event):
+        if self._edit_entry is not None:
+            w = event.widget
+            if w != self.canvas and w != self._edit_entry:
+                self._destroy_edit()
+
+    def _on_mousewheel(self, event):
+        self.canvas.yview("scroll", -1 * (event.delta // 120), "units")
+        return "break"
+
+    def _on_canvas_press(self, event):
         self._destroy_edit()
-        if not self.hidden_cols:
+        self._drag_start_x = event.x
+        self._drag_start_y = event.y
+        self._dragging = False
+        self._scroll_accum_y = 0
+
+    def _on_canvas_drag(self, event):
+        dy = event.y - self._drag_start_y
+        if abs(dy) > 10:
+            if not self._dragging:
+                self._dragging = True
+            target_y = int(-dy / 26)
+            delta_y = target_y - self._scroll_accum_y
+            if delta_y:
+                self.canvas.yview("scroll", delta_y, "units")
+                self._scroll_accum_y = target_y
+
+    def _on_canvas_release(self, event):
+        if not self._dragging:
+            cx = int(self.canvas.canvasx(event.x))
+            cy = int(self.canvas.canvasy(event.y))
+            self._process_canvas_click(cx, cy)
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self._dragging = False
+        self._scroll_accum_y = 0
+
+    def _process_canvas_click(self, cx, cy):
+        if cy < HEADER_H:
+            if not self.hidden_cols:
+                x = 0
+                for cn, w in COL_WIDTHS.items():
+                    if x <= cx < x + w:
+                        ci = COL_MAP.get(cn)
+                        if ci is not None:
+                            if ci in self._selected_hidden_cols:
+                                self._selected_hidden_cols.discard(ci)
+                            else:
+                                self._selected_hidden_cols.add(ci)
+                            self.btn_exam.config(state=tk.NORMAL if self._selected_hidden_cols else tk.DISABLED)
+                            self._redraw()
+                            self._update_status()
+                        break
+                    x += w
             return
 
-        cx = int(self.canvas.canvasx(event.x))
-        cy = int(self.canvas.canvasy(event.y))
-
-        if cy < HEADER_H:
+        if not self.hidden_cols:
             return
 
         row_idx = (cy - HEADER_H) // ROW_H
@@ -426,10 +479,15 @@ class TangoExam:
         entry.bind("<Return>", self._on_exam_enter)
         entry.bind("<Tab>", self._on_exam_tab)
         entry.bind("<Escape>", lambda e: self._destroy_edit())
+        entry.bind("<MouseWheel>", self._on_mousewheel)
+        entry.bind("<Button-4>", lambda e: self.canvas.yview("scroll", -3, "units"))
+        entry.bind("<Button-5>", lambda e: self.canvas.yview("scroll", 3, "units"))
+        entry.bind("<FocusOut>", self._destroy_edit)
         self._edit_entry = entry
 
     def _destroy_edit(self, event=None):
         if self._edit_entry is not None:
+            self._submit_answer()
             try:
                 self._edit_entry.destroy()
             except tk.TclError:
@@ -437,6 +495,15 @@ class TangoExam:
             self._edit_entry = None
             self._edit_data_idx = None
             self._edit_col_idx = None
+            self._redraw()
+            self._update_status()
+            total_blanks = len(self.hidden_cols) * len(self.data)
+            if total_blanks > 0 and len(self.results) >= total_blanks:
+                correct = sum(1 for v in self.results.values() if v)
+                total = len(self.results)
+                messagebox.showinfo("試験完了",
+                                    f"すべての回答が完了しました！\n"
+                                    f"正解数: {correct}/{total}（{correct/total*100:.1f}%）")
 
     # ═══════════════════════ Answer logic ═══════════════════════
 
@@ -459,42 +526,44 @@ class TangoExam:
         self.answers[(data_idx, col_idx)] = user_answer
         self.results[(data_idx, col_idx)] = is_correct
 
-        self._redraw()
-        self._update_status()
-
-        total_blanks = len(self.hidden_cols) * len(self.data)
-        if len(self.results) >= total_blanks:
-            correct = sum(1 for v in self.results.values() if v)
-            total = len(self.results)
-            messagebox.showinfo("試験完了",
-                                f"すべての回答が完了しました！\n"
-                                f"正解数: {correct}/{total}（{correct/total*100:.1f}%）")
+    def _see_row(self, data_idx):
+        canvas_h = self.canvas.winfo_height()
+        if canvas_h <= 0:
+            return
+        y_top = int(self.canvas.canvasy(0))
+        y_bot = int(self.canvas.canvasy(canvas_h))
+        cell_top = HEADER_H + data_idx * ROW_H
+        cell_bot = cell_top + ROW_H
+        if cell_top < y_top:
+            frac = cell_top / max(1, HEADER_H + len(self.data) * ROW_H)
+            self.canvas.yview("moveto", frac)
+        elif cell_bot > y_bot:
+            frac = (cell_bot - canvas_h + 4) / max(1, HEADER_H + len(self.data) * ROW_H)
+            self.canvas.yview("moveto", frac)
 
     def _on_exam_enter(self, event):
         data_idx = self._edit_data_idx
         col_idx = self._edit_col_idx
-        self._submit_answer()
         self._destroy_edit()
         if data_idx is None:
             return "break"
         for di in range(data_idx + 1, len(self.data)):
             if col_idx in self.hidden_cols and (di, col_idx) not in self.results:
+                self._see_row(di)
+                self.canvas.update_idletasks()
                 self._start_edit(di, col_idx)
-                self.canvas.yview("moveto", (HEADER_H + di * ROW_H) /
-                                  max(1, HEADER_H + len(self.data) * ROW_H))
                 return "break"
         for di in range(0, data_idx):
             if col_idx in self.hidden_cols and (di, col_idx) not in self.results:
+                self._see_row(di)
+                self.canvas.update_idletasks()
                 self._start_edit(di, col_idx)
-                self.canvas.yview("moveto", (HEADER_H + di * ROW_H) /
-                                  max(1, HEADER_H + len(self.data) * ROW_H))
                 return "break"
         return "break"
 
     def _on_exam_tab(self, event):
         data_idx = self._edit_data_idx
         col_idx = self._edit_col_idx
-        self._submit_answer()
         self._destroy_edit()
         if data_idx is None:
             return "break"
@@ -512,9 +581,9 @@ class TangoExam:
             for di in range(data_idx + 1, len(self.data)):
                 for next_col in hidden_sorted:
                     if (di, next_col) not in self.results:
+                        self._see_row(di)
+                        self.canvas.update_idletasks()
                         self._start_edit(di, next_col)
-                        self.canvas.yview("moveto", (HEADER_H + di * ROW_H) /
-                                          max(1, HEADER_H + len(self.data) * ROW_H))
                         found = True
                         break
                 if found:
@@ -524,9 +593,9 @@ class TangoExam:
             for di in range(0, data_idx):
                 for next_col in hidden_sorted:
                     if (di, next_col) not in self.results:
+                        self._see_row(di)
+                        self.canvas.update_idletasks()
                         self._start_edit(di, next_col)
-                        self.canvas.yview("moveto", (HEADER_H + di * ROW_H) /
-                                          max(1, HEADER_H + len(self.data) * ROW_H))
                         found = True
                         break
                 if found:
