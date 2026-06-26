@@ -1,4 +1,5 @@
 import os
+import sys
 import csv
 import copy
 import logging
@@ -14,7 +15,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("tango_editor")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 COL_MAP = {"kanji": 0, "kana": 1, "trans": 2, "pos": 3, "phrase": 4}
 COL_NAMES = ["kanji", "kana", "trans", "pos", "phrase"]
 

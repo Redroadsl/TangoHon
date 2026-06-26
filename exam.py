@@ -1,4 +1,5 @@
 import os
+import sys
 import csv
 import copy
 import random
@@ -15,7 +16,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("tango_exam")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 COL_NAMES = ["kanji", "kana", "trans", "pos", "phrase"]
 COL_LABELS = {"kanji": "漢字", "kana": "仮名", "trans": "翻訳", "pos": "詞性", "phrase": "短语"}
 COL_MAP = {"kanji": 0, "kana": 1, "trans": 2, "pos": 3, "phrase": 4}
