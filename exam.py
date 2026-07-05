@@ -415,6 +415,8 @@ class TangoExam:
         return "break"
 
     def _on_canvas_press(self, event):
+        if event.widget != self.canvas:
+            return
         self._destroy_edit()
         self._drag_start_x = event.x
         self._drag_start_y = event.y
@@ -618,24 +620,27 @@ class TangoExam:
             frac = (cell_bot - canvas_h + 4) / max(1, self._header_h + len(self.data) * self._row_h)
             self.canvas.yview("moveto", frac)
 
+    def _next_editable_row(self, start, col_idx):
+        n = len(self.data)
+        for di in range(start, n):
+            if col_idx in self.hidden_cols and self.results.get((di, col_idx)) != "exact":
+                return di
+        for di in range(0, start):
+            if col_idx in self.hidden_cols and self.results.get((di, col_idx)) != "exact":
+                return di
+        return None
+
     def _on_exam_enter(self, event):
         data_idx = self._edit_data_idx
         col_idx = self._edit_col_idx
         self._destroy_edit()
         if data_idx is None:
             return "break"
-        for di in range(data_idx + 1, len(self.data)):
-            if col_idx in self.hidden_cols and (di, col_idx) not in self.results:
-                self._see_row(di)
-                self.canvas.update_idletasks()
-                self._start_edit(di, col_idx)
-                return "break"
-        for di in range(0, data_idx):
-            if col_idx in self.hidden_cols and (di, col_idx) not in self.results:
-                self._see_row(di)
-                self.canvas.update_idletasks()
-                self._start_edit(di, col_idx)
-                return "break"
+        di = self._next_editable_row(data_idx + 1, col_idx)
+        if di is not None:
+            self._see_row(di)
+            self.canvas.update_idletasks()
+            self._start_edit(di, col_idx)
         return "break"
 
     def _on_exam_tab(self, event):
@@ -649,7 +654,7 @@ class TangoExam:
         found = False
 
         for next_col in hidden_sorted:
-            if next_col != col_idx and (data_idx, next_col) not in self.results:
+            if next_col != col_idx and self.results.get((data_idx, next_col)) != "exact":
                 self._start_edit(data_idx, next_col)
                 found = True
                 break
@@ -657,7 +662,7 @@ class TangoExam:
         if not found:
             for di in range(data_idx + 1, len(self.data)):
                 for next_col in hidden_sorted:
-                    if (di, next_col) not in self.results:
+                    if self.results.get((di, next_col)) != "exact":
                         self._see_row(di)
                         self.canvas.update_idletasks()
                         self._start_edit(di, next_col)
@@ -669,7 +674,7 @@ class TangoExam:
         if not found:
             for di in range(0, data_idx):
                 for next_col in hidden_sorted:
-                    if (di, next_col) not in self.results:
+                    if self.results.get((di, next_col)) != "exact":
                         self._see_row(di)
                         self.canvas.update_idletasks()
                         self._start_edit(di, next_col)
