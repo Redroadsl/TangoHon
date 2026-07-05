@@ -24,8 +24,8 @@ COL_NAMES = ["kanji", "kana", "trans", "pos", "phrase"]
 COL_LABELS = {"kanji": "漢字", "kana": "仮名", "trans": "翻訳", "pos": "詞性", "phrase": "短语"}
 COL_MAP = {"kanji": 0, "kana": 1, "trans": 2, "pos": 3, "phrase": 4}
 COL_WIDTHS = {"index": 40, "kanji": 150, "kana": 160, "trans": 220, "pos": 60, "phrase": 200}
-ROW_H = 26
-HEADER_H = 24
+DEFAULT_ROW_H = 26
+DEFAULT_HEADER_H = 24
 
 
 class TangoExam:
@@ -59,6 +59,12 @@ class TangoExam:
         self._drag_start_y = 0
         self._dragging = False
         self._scroll_accum_y = 0
+
+        self.font_size = tk.IntVar(value=10)
+        self.font_size.trace_add("write", lambda *_: self._update_font_size())
+        self._cell_font = Font(family="Consolas", size=10)
+        self._row_h = DEFAULT_ROW_H
+        self._header_h = DEFAULT_HEADER_H
 
         self._build_ui()
         self.refresh_file_list()
@@ -105,6 +111,12 @@ class TangoExam:
         self.hint_var = tk.StringVar(value="ヘッダーをクリックして隠す列を選択")
         ttk.Label(toolbar, textvariable=self.hint_var, foreground="gray").pack(side=tk.LEFT, padx=(6, 0))
 
+        ttk.Label(toolbar, text="文字サイズ:").pack(side=tk.RIGHT, padx=(10, 0))
+        ttk.Scale(toolbar, from_=8, to=24, variable=self.font_size,
+                  orient=tk.HORIZONTAL, length=60).pack(side=tk.RIGHT, padx=(2, 0))
+        self.fs_label = ttk.Label(toolbar, text="10", width=2)
+        self.fs_label.pack(side=tk.RIGHT)
+
         self.btn_reset = ttk.Button(toolbar, text="リセット", command=self.reset_exam, width=8, state=tk.DISABLED)
         self.btn_reset.pack(side=tk.RIGHT, padx=(2, 0))
         self.btn_exam = ttk.Button(toolbar, text="出題開始", command=self.start_exam_from_selection, width=10, state=tk.DISABLED)
@@ -134,7 +146,6 @@ class TangoExam:
         self.canvas.bind("<Button-5>", lambda e: self.canvas.yview("scroll", 3, "units"))
 
         self._total_w = sum(COL_WIDTHS.values())
-        self._cell_font = Font(family="Consolas", size=10)
 
         # ── Status bar ──
         status_frame = ttk.Frame(self.root)
@@ -147,6 +158,15 @@ class TangoExam:
         self.enc_status_var = tk.StringVar()
         ttk.Label(status_frame, textvariable=self.enc_status_var,
                   relief=tk.SUNKEN, anchor=tk.E, width=14).pack(side=tk.RIGHT)
+
+        self._update_font_size()
+
+    def _update_font_size(self):
+        size = self.font_size.get()
+        self._cell_font = Font(family="Consolas", size=size)
+        self._row_h = max(18, int(size * 2.6))
+        self.fs_label.config(text=str(size))
+        self._redraw()
 
     def _scroll_y(self, *args):
         self.canvas.yview(*args)
@@ -164,18 +184,18 @@ class TangoExam:
 
     def _on_canvas_configure(self, event):
         self.canvas.configure(scrollregion=(0, 0, self._total_w,
-                              HEADER_H + len(self.data) * ROW_H + 4))
+                              self._header_h + len(self.data) * self._row_h + 4))
 
     def _move_edit(self):
         if self._edit_entry is not None and self._edit_data_idx is not None and self._edit_col_idx is not None:
             sx, sy = self._cell_screen_pos(self._edit_data_idx, self._edit_col_idx)
             if sx is not None:
-                self._edit_entry.place(x=sx, y=sy, width=COL_WIDTHS[COL_NAMES[self._edit_col_idx]], height=ROW_H)
+                self._edit_entry.place(x=sx, y=sy, width=COL_WIDTHS[COL_NAMES[self._edit_col_idx]], height=self._row_h)
 
     def _cell_screen_pos(self, data_idx, col_idx):
         col_name = COL_NAMES[col_idx]
         x = sum(w for cn, w in COL_WIDTHS.items() if list(COL_WIDTHS.keys()).index(cn) < list(COL_WIDTHS.keys()).index(col_name))
-        y = HEADER_H + data_idx * ROW_H
+        y = self._header_h + data_idx * self._row_h
         ox = int(self.canvas.canvasx(0))
         oy = int(self.canvas.canvasy(0))
         return x - ox, y - oy
@@ -189,10 +209,14 @@ class TangoExam:
             hidden_names = [COL_LABELS[COL_NAMES[c]] for c in sorted(self.hidden_cols)]
             parts.append(f"出題中（{', '.join(hidden_names)}）")
             answered = len(self.results)
-            correct = sum(1 for v in self.results.values() if v)
+            correct = sum(1 for v in self.results.values() if v == "exact")
+            partial = sum(1 for v in self.results.values() if v == "partial")
             if answered > 0:
                 pct = correct / answered * 100
-                parts.append(f"正解: {correct}/{answered}（{pct:.1f}%）")
+                label = f"正解: {correct}/{answered}（{pct:.1f}%）"
+                if partial:
+                    label += f" 近似: {partial}"
+                parts.append(label)
         else:
             if self._selected_hidden_cols:
                 names = [COL_LABELS[COL_NAMES[c]] for c in sorted(self._selected_hidden_cols)]
@@ -331,7 +355,7 @@ class TangoExam:
         self._destroy_edit()
         self.canvas.delete("all")
 
-        total_h = HEADER_H + len(self.data) * ROW_H + 4
+        total_h = self._header_h + len(self.data) * self._row_h + 4
         self.canvas.configure(scrollregion=(0, 0, self._total_w, total_h))
 
         # Draw header
@@ -341,19 +365,19 @@ class TangoExam:
             ci = COL_MAP.get(cn)
             selected = not self.hidden_cols and ci is not None and ci in self._selected_hidden_cols
             h_bg = "#aaddff" if selected else "#e8e8e8"
-            self.canvas.create_rectangle(x, 0, x + w, HEADER_H,
+            self.canvas.create_rectangle(x, 0, x + w, self._header_h,
                                          fill=h_bg, outline="#ccc")
-            self.canvas.create_text(x + w / 2, HEADER_H / 2, anchor=tk.CENTER,
-                                    text=header_labels[i], font=Font(size=10, weight="bold"))
+            self.canvas.create_text(x + w / 2, self._header_h / 2, anchor=tk.CENTER,
+                                    text=header_labels[i], font=Font(size=self.font_size.get(), weight="bold"))
             x += w
 
         # Draw rows
         for row_idx, row in enumerate(self.data):
-            y = HEADER_H + row_idx * ROW_H
+            y = self._header_h + row_idx * self._row_h
             x = 0
             for col_idx, (cn, w) in enumerate(COL_WIDTHS.items()):
                 bg = "#f8f8f8" if row_idx % 2 == 0 else "#ffffff"
-                self.canvas.create_rectangle(x, y, x + w, y + ROW_H,
+                self.canvas.create_rectangle(x, y, x + w, y + self._row_h,
                                              fill=bg, outline="#ddd", tags="cell")
 
                 if cn == "index":
@@ -365,13 +389,14 @@ class TangoExam:
                     ci = COL_MAP.get(cn)
                     text = row[ci] if ci is not None and ci < len(row) else ""
                     if (row_idx, ci) in self.results:
-                        color = "#007700" if self.results[(row_idx, ci)] else "#CC0000"
+                        m = self.results[(row_idx, ci)]
+                        color = "#007700" if m == "exact" else "#996600" if m == "partial" else "#CC0000"
                     else:
                         color = "#000000"
                     anchor = tk.W
                     tx = x + 6
 
-                self.canvas.create_text(tx, y + ROW_H / 2, anchor=anchor,
+                self.canvas.create_text(tx, y + self._row_h / 2, anchor=anchor,
                                         text=text, fill=color,
                                         font=self._cell_font, tags="cell")
                 x += w
@@ -417,7 +442,7 @@ class TangoExam:
         self._scroll_accum_y = 0
 
     def _process_canvas_click(self, cx, cy):
-        if cy < HEADER_H:
+        if cy < self._header_h:
             if not self.hidden_cols:
                 x = 0
                 for cn, w in COL_WIDTHS.items():
@@ -438,7 +463,7 @@ class TangoExam:
         if not self.hidden_cols:
             return
 
-        row_idx = (cy - HEADER_H) // ROW_H
+        row_idx = (cy - self._header_h) // self._row_h
         if row_idx < 0 or row_idx >= len(self.data):
             return
 
@@ -456,7 +481,7 @@ class TangoExam:
 
         if col_idx is None:
             return
-        if self.results.get((row_idx, col_idx)) == True:
+        if self.results.get((row_idx, col_idx)) == "exact":
             return
 
         self._start_edit(row_idx, col_idx)
@@ -474,8 +499,8 @@ class TangoExam:
         self._edit_data_idx = data_idx
         self._edit_col_idx = col_idx
 
-        entry = ttk.Entry(self.canvas, font=Font(family="Consolas", size=10))
-        entry.place(x=sx, y=sy, width=width, height=ROW_H)
+        entry = ttk.Entry(self.canvas, font=Font(family="Consolas", size=self.font_size.get()))
+        entry.place(x=sx, y=sy, width=width, height=self._row_h)
         entry.insert(0, self.data[data_idx][col_idx])
         entry.select_range(0, tk.END)
         entry.focus_set()
@@ -503,11 +528,13 @@ class TangoExam:
             self._update_status()
             total_blanks = len(self.hidden_cols) * len(self.data)
             if total_blanks > 0 and len(self.results) >= total_blanks:
-                correct = sum(1 for v in self.results.values() if v)
+                correct = sum(1 for v in self.results.values() if v == "exact")
+                partial = sum(1 for v in self.results.values() if v == "partial")
                 total = len(self.results)
-                messagebox.showinfo("試験完了",
-                                    f"すべての回答が完了しました！\n"
-                                    f"正解数: {correct}/{total}（{correct/total*100:.1f}%）")
+                msg = f"すべての回答が完了しました！\n正解数: {correct}/{total}（{correct/total*100:.1f}%）"
+                if partial:
+                    msg += f"（近似: {partial}）"
+                messagebox.showinfo("試験完了", msg)
 
     # ═══════════════════════ Answer logic ═══════════════════════
 
@@ -524,11 +551,16 @@ class TangoExam:
 
         flat_idx = self.exam_map[data_idx]
         correct_answer = self.flat_data[flat_idx][col_idx].strip()
-        is_correct = (user_answer == correct_answer)
+        if user_answer == correct_answer:
+            match = "exact"
+        elif user_answer and user_answer in correct_answer:
+            match = "partial"
+        else:
+            match = "wrong"
 
         self.data[data_idx][col_idx] = user_answer
         self.answers[(data_idx, col_idx)] = user_answer
-        self.results[(data_idx, col_idx)] = is_correct
+        self.results[(data_idx, col_idx)] = match
 
     def _see_row(self, data_idx):
         canvas_h = self.canvas.winfo_height()
@@ -536,13 +568,13 @@ class TangoExam:
             return
         y_top = int(self.canvas.canvasy(0))
         y_bot = int(self.canvas.canvasy(canvas_h))
-        cell_top = HEADER_H + data_idx * ROW_H
-        cell_bot = cell_top + ROW_H
+        cell_top = self._header_h + data_idx * self._row_h
+        cell_bot = cell_top + self._row_h
         if cell_top < y_top:
-            frac = cell_top / max(1, HEADER_H + len(self.data) * ROW_H)
+            frac = cell_top / max(1, self._header_h + len(self.data) * self._row_h)
             self.canvas.yview("moveto", frac)
         elif cell_bot > y_bot:
-            frac = (cell_bot - canvas_h + 4) / max(1, HEADER_H + len(self.data) * ROW_H)
+            frac = (cell_bot - canvas_h + 4) / max(1, self._header_h + len(self.data) * self._row_h)
             self.canvas.yview("moveto", frac)
 
     def _on_exam_enter(self, event):
