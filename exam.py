@@ -144,6 +144,7 @@ class TangoExam:
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.canvas.bind("<Button-4>", lambda e: self.canvas.yview("scroll", -3, "units"))
         self.canvas.bind("<Button-5>", lambda e: self.canvas.yview("scroll", 3, "units"))
+        self.canvas.bind("<Button-3>", self._on_canvas_right_click)
 
         self._total_w = sum(COL_WIDTHS.values())
 
@@ -486,6 +487,45 @@ class TangoExam:
 
         self._start_edit(row_idx, col_idx)
 
+    def _on_canvas_right_click(self, event):
+        if not self.hidden_cols:
+            return
+        cx = int(self.canvas.canvasx(event.x))
+        cy = int(self.canvas.canvasy(event.y))
+        if cy < self._header_h:
+            return
+        row_idx = (cy - self._header_h) // self._row_h
+        if row_idx < 0 or row_idx >= len(self.data):
+            return
+        x = 0
+        col_idx = None
+        for cn, w in COL_WIDTHS.items():
+            if x <= cx < x + w:
+                ci = COL_MAP.get(cn)
+                if ci is not None and ci in self.hidden_cols:
+                    col_idx = ci
+                break
+            x += w
+        if col_idx is None:
+            return
+        self._reveal_answer(row_idx, col_idx)
+
+    def _reveal_answer(self, data_idx, col_idx):
+        self._destroy_edit()
+        flat_idx = self.exam_map[data_idx]
+        correct = self.flat_data[flat_idx][col_idx]
+        self.data[data_idx][col_idx] = "\u00d7" + correct
+        self.answers[(data_idx, col_idx)] = correct
+        self.results[(data_idx, col_idx)] = "wrong"
+        self._redraw()
+        self._update_status()
+
+    def _on_entry_right_click(self):
+        di = self._edit_data_idx
+        ci = self._edit_col_idx
+        if di is not None and ci is not None:
+            self._reveal_answer(di, ci)
+
     def _start_edit(self, data_idx, col_idx):
         self._destroy_edit()
 
@@ -512,6 +552,7 @@ class TangoExam:
         entry.bind("<Button-4>", lambda e: self.canvas.yview("scroll", -3, "units"))
         entry.bind("<Button-5>", lambda e: self.canvas.yview("scroll", 3, "units"))
         entry.bind("<FocusOut>", self._destroy_edit)
+        entry.bind("<Button-3>", lambda e: self._on_entry_right_click())
         self._edit_entry = entry
 
     def _destroy_edit(self, event=None):
