@@ -119,6 +119,8 @@ class TangoExam:
 
         self.btn_reset = ttk.Button(toolbar, text="リセット", command=self.reset_exam, width=8, state=tk.DISABLED)
         self.btn_reset.pack(side=tk.RIGHT, padx=(2, 0))
+        self.btn_review = ttk.Button(toolbar, text="復習出題", command=self.start_review_exam, width=8, state=tk.DISABLED)
+        self.btn_review.pack(side=tk.RIGHT, padx=(2, 0))
         self.btn_exam = ttk.Button(toolbar, text="出題開始", command=self.start_exam_from_selection, width=10, state=tk.DISABLED)
         self.btn_exam.pack(side=tk.RIGHT, padx=(2, 0))
 
@@ -291,6 +293,7 @@ class TangoExam:
         self.exam_map = list(range(len(self.flat_data)))
         self.btn_exam.config(state=tk.DISABLED)
         self.btn_reset.config(state=tk.DISABLED)
+        self.btn_review.config(state=tk.DISABLED)
         self.hint_var.set("ヘッダーをクリックして隠す列を選択")
         self._redraw()
         self._update_status()
@@ -329,6 +332,7 @@ class TangoExam:
         self._selected_hidden_cols.clear()
         self.btn_reset.config(state=tk.NORMAL)
         self.btn_exam.config(state=tk.DISABLED)
+        self.btn_review.config(state=tk.DISABLED)
         self.hint_var.set("空欄をクリックして入力  |  Enter↓  Tab→")
         self._redraw()
         self._update_status()
@@ -345,10 +349,44 @@ class TangoExam:
         self.exam_map = list(range(len(self.flat_data)))
         self.btn_reset.config(state=tk.DISABLED)
         self.btn_exam.config(state=tk.DISABLED)
+        self.btn_review.config(state=tk.DISABLED)
         self.hint_var.set("ヘッダーをクリックして隠す列を選択")
         self._redraw()
         self._update_status()
         logger.info("試験をリセットしました")
+
+    def start_review_exam(self):
+        if not self.results:
+            return
+        non_correct = set()
+        for data_idx in range(len(self.data)):
+            flat_idx = self.exam_map[data_idx]
+            ok = all(self.results.get((data_idx, ci)) == "exact" for ci in self.hidden_cols)
+            if not ok:
+                non_correct.add(flat_idx)
+        indices = sorted(non_correct)
+        random.shuffle(indices)
+        if len(indices) < 2:
+            messagebox.showinfo("復習完了", "正解できなかった項目が1つ以下です")
+            return
+        self.answers.clear()
+        self.results.clear()
+        self.exam_map = indices
+        self.data = []
+        for flat_idx in indices:
+            row = self.flat_data[flat_idx][:]
+            for ci in self.hidden_cols:
+                row[ci] = ""
+            self.data.append(row)
+        self._selected_hidden_cols.clear()
+        self.btn_reset.config(state=tk.NORMAL)
+        self.btn_exam.config(state=tk.DISABLED)
+        self.btn_review.config(state=tk.DISABLED)
+        self.hint_var.set("空欄をクリックして入力  |  Enter↓  Tab→")
+        self._redraw()
+        self._update_status()
+        logger.info("復習開始: %d 語, 隠し列=%s", len(self.data),
+                     [COL_NAMES[c] for c in sorted(self.hidden_cols)])
 
     # ═══════════════════════ Canvas drawing ═══════════════════════
 
@@ -567,6 +605,7 @@ class TangoExam:
             self._edit_entry = None
             self._edit_data_idx = None
             self._edit_col_idx = None
+            self.btn_review.config(state=tk.NORMAL if self.results else tk.DISABLED)
             self._redraw()
             self._update_status()
             total_blanks = len(self.hidden_cols) * len(self.data)
