@@ -19,24 +19,25 @@ if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-COL_MAP = {"kanji": 0, "kana": 1, "trans": 2, "pos": 3, "phrase": 4}
-COL_NAMES = ["kanji", "kana", "trans", "pos", "phrase"]
+DEFAULT_COL_TITLES = ["漢字", "仮名", "翻訳", "発音", "品詞", "例文"]
 
 
 class TangoEditor:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("単語帳管理ツール")
-        self.root.geometry("1100x650")
+        self.root.geometry("1280x720")
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        wx = (sw - 1100) // 2
-        wy = (sh - 650) // 2
-        self.root.geometry(f"1100x650+{wx}+{wy}")
+        wx = (sw - 1280) // 2
+        wy = (sh - 720) // 2
+        self.root.geometry(f"1280x720+{wx}+{wy}")
 
         self.encoding = tk.StringVar(value="gbk")
         self.current_file = None
+        self.column_titles = list(DEFAULT_COL_TITLES)
+        self.num_cols = len(self.column_titles)
         self.data = []
         self.filtered = []
         self._saved_state = None
@@ -46,7 +47,7 @@ class TangoEditor:
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.apply_filter())
         self.encoding.trace_add("write", lambda *_: self._update_status())
-        self.font_size = tk.IntVar(value=10)
+        self.font_size = tk.IntVar(value=14)
         self.font_size.trace_add("write", lambda *_: self._update_font_size())
 
         self._edit_entry = None
@@ -152,20 +153,9 @@ class TangoEditor:
         tree_area = ttk.Frame(right_frame)
         tree_area.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        columns = ("index", "kanji", "kana", "trans", "pos", "phrase")
-        self.tree = ttk.Treeview(tree_area, columns=columns, show="headings", selectmode="browse")
-        self.tree.heading("index", text="#")
-        self.tree.heading("kanji", text="漢字", command=lambda: self.sort_by("kanji"))
-        self.tree.heading("kana", text="仮名", command=lambda: self.sort_by("kana"))
-        self.tree.heading("trans", text="翻訳", command=lambda: self.sort_by("trans"))
-        self.tree.heading("pos", text="詞性", command=lambda: self.sort_by("pos"))
-        self.tree.heading("phrase", text="短语", command=lambda: self.sort_by("phrase"))
-        self.tree.column("index", width=40, anchor=tk.CENTER)
-        self.tree.column("kanji", width=150, anchor=tk.W)
-        self.tree.column("kana", width=160, anchor=tk.W)
-        self.tree.column("trans", width=220, anchor=tk.W)
-        self.tree.column("pos", width=60, anchor=tk.CENTER)
-        self.tree.column("phrase", width=200, anchor=tk.W)
+        self.tree = ttk.Treeview(tree_area, columns=("index",) + tuple(self._col_ids()),
+                                 show="headings", selectmode="browse")
+        self._configure_columns()
 
         vsb = ttk.Scrollbar(tree_area, orient=tk.VERTICAL, command=self.tree.yview)
         hsb = ttk.Scrollbar(right_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
@@ -206,7 +196,8 @@ class TangoEditor:
         parts = []
         if self.current_file:
             parts.append(self.current_file)
-        parts.append(f"単語数: {len(self.data)}")
+        word_count = sum(1 for r in self.data if any(c.strip() for c in r))
+        parts.append(f"単語数: {word_count}")
         if self.dirty:
             parts.append("変更あり")
         undos = len(self._undo_stack)
@@ -214,6 +205,31 @@ class TangoEditor:
             parts.append(f"取り消し可能: {undos}回")
         self.status_var.set("  |  ".join(parts))
         self.enc_status_var.set(f"[{self.encoding.get()}]")
+
+    def _col_ids(self):
+        return [f"c{i}" for i in range(self.num_cols)]
+
+    def _configure_columns(self):
+        col_ids = self._col_ids()
+        self.tree.configure(columns=("index",) + tuple(col_ids))
+        self.tree.heading("index", text="#")
+        self.tree.column("index", width=40, anchor=tk.CENTER, stretch=False)
+        for i, col in enumerate(col_ids):
+            title = self.column_titles[i] if i < len(self.column_titles) else ""
+            self.tree.heading(col, text=title, command=lambda c=col: self.sort_by(c))
+            self.tree.column(col, width=150, anchor=tk.W, stretch=(i == len(col_ids) - 1))
+
+    def _apply_columns(self, titles):
+        self.column_titles = list(titles)
+        if not self.column_titles:
+            self.column_titles = list(DEFAULT_COL_TITLES)
+        self.num_cols = len(self.column_titles)
+        self._configure_columns()
+
+    def _row_values(self, fi, row):
+        values = [str(fi + 1)]
+        values.extend(row[i] if i < len(row) else "" for i in range(self.num_cols))
+        return tuple(values)
 
     def _update_font_size(self):
         size = self.font_size.get()
@@ -228,7 +244,7 @@ class TangoEditor:
 
     def _ensure_trailing_empty(self):
         if not self.data or any(self.data[-1]):
-            self.data.append(["", "", "", "", ""])
+            self.data.append([""] * self.num_cols)
             return True
         return False
 
@@ -280,10 +296,13 @@ class TangoEditor:
         col_name = self.tree.column(col_id)["id"]
         if col_name == "index":
             return
+        try:
+            col_idx = int(col_name[1:])
+        except (ValueError, IndexError):
+            return
 
         self._press_iid = iid
-        col_idx = COL_MAP.get(col_name)
-        self._press_col_idx = col_idx if col_idx is not None else None
+        self._press_col_idx = col_idx
         return "break"
 
     def _on_drag_motion(self, event):
@@ -292,7 +311,8 @@ class TangoEditor:
         if abs(dx) > 10 or abs(dy) > 10:
             if not self._dragging:
                 self._dragging = True
-            target_y = int(-dy / 26)
+            row_h = max(18, int(self.font_size.get() * 2.6))
+            target_y = int(-dy / row_h)
             delta_y = target_y - self._scroll_accum_y
             if delta_y:
                 self.tree.yview("scroll", delta_y, "units")
@@ -342,28 +362,31 @@ class TangoEditor:
 
 
     def _destroy_edit(self, event=None):
-        if self._edit_entry is not None:
-            new_text = self._edit_entry.get().strip()
-            if self._edit_data_idx is not None and self._edit_col_idx is not None:
-                old_text = self.data[self._edit_data_idx][self._edit_col_idx]
+        entry = self._edit_entry
+        if entry is not None:
+            new_text = entry.get().strip()
+            data_idx = self._edit_data_idx
+            col_idx = self._edit_col_idx
+            if data_idx is not None and col_idx is not None:
+                old_text = self.data[data_idx][col_idx]
                 if new_text != old_text:
                     self._push_undo()
-                    self.data[self._edit_data_idx][self._edit_col_idx] = new_text
+                    self.data[data_idx][col_idx] = new_text
                     added = self._ensure_trailing_empty()
-                    self._refresh_single_row(self._edit_data_idx)
+                    self._refresh_single_row(data_idx)
                     if added:
                         self.apply_filter()
                     logger.info("セル編集: %s[%s] = '%s' -> '%s'",
-                                COL_NAMES[self._edit_col_idx], self._edit_data_idx,
+                                self.column_titles[col_idx], data_idx,
                                 old_text, new_text)
-                self._edit_data_idx = None
-                self._edit_col_idx = None
-                self._edit_iid = None
+            self._edit_data_idx = None
+            self._edit_col_idx = None
+            self._edit_iid = None
+            self._edit_entry = None
             try:
-                self._edit_entry.destroy()
+                entry.destroy()
             except tk.TclError:
                 pass
-            self._edit_entry = None
             self._update_status()
 
     def _on_enter(self, event):
@@ -398,16 +421,18 @@ class TangoEditor:
         if data_idx is None:
             return "break"
         next_col = col_idx + 1
-        if next_col < 5:
+        if next_col < self.num_cols:
             self._start_edit(data_idx, next_col)
         return "break"
 
     def _start_edit(self, data_idx, col_idx):
         iid = str(data_idx)
-        col_name = COL_NAMES[col_idx]
+        col_id = self._col_ids()[col_idx]
         if not self.tree.exists(iid):
             return
-        x, y, w, h = self.tree.bbox(iid, col_name)
+        self.tree.see(iid)
+        self.root.update_idletasks()
+        x, y, w, h = self.tree.bbox(iid, col_id)
         if x is None:
             return
 
@@ -451,13 +476,20 @@ class TangoEditor:
             return
         try:
             with open(path, "w", encoding=self.encoding.get(), newline="") as f:
-                pass
-            self.refresh_file_list()
-            self.status_var.set(f"作成しました: {name}")
-            logger.info("ファイルを作成しました: %s", name)
+                csv.writer(f).writerow(DEFAULT_COL_TITLES)
         except Exception as e:
             logger.error("ファイル作成エラー: %s", e)
             messagebox.showerror("エラー", str(e))
+            return
+        self.refresh_file_list()
+        self._destroy_edit()
+        if self.dirty:
+            if messagebox.askyesno("未保存", "変更が保存されていません。保存しますか？"):
+                if not self.save_file():
+                    return
+        self.load_file(name)
+        self.status_var.set(f"作成しました: {name}")
+        logger.info("ファイルを作成しました: %s", name)
 
     def show_file_context_menu(self, event):
         idx = self.file_listbox.nearest(event.y)
@@ -502,9 +534,12 @@ class TangoEditor:
         try:
             os.remove(os.path.join(BASE_DIR, fname))
             if self.current_file == fname:
+                self._destroy_edit()
                 self.current_file = None
                 self.data.clear()
+                self._undo_stack.clear()
                 self._saved_state = None
+                self._apply_columns(list(DEFAULT_COL_TITLES))
                 self.apply_filter()
             self.refresh_file_list()
             logger.info("ファイルを削除しました: %s", fname)
@@ -519,10 +554,11 @@ class TangoEditor:
         if not sel:
             return
         fname = self.file_listbox.get(sel[0])
+        self._destroy_edit()
         if self.dirty:
             if messagebox.askyesno("未保存", "変更が保存されていません。保存しますか？"):
-                self.save_file()
-        self._destroy_edit()
+                if not self.save_file():
+                    return
         self.load_file(fname)
 
     def load_file(self, fname):
@@ -533,6 +569,8 @@ class TangoEditor:
         self.data.clear()
         self._undo_stack.clear()
         last_error = None
+        success = False
+        rows = []
         for enc in encodings_to_try:
             try:
                 with open(path, "r", encoding=enc) as f:
@@ -541,27 +579,29 @@ class TangoEditor:
                     for row in reader:
                         if not row or all(cell.strip() == "" for cell in row):
                             continue
-                        kanji = row[0].strip() if len(row) > 0 else ""
-                        kana = row[1].strip() if len(row) > 1 else ""
-                        trans = row[2].strip() if len(row) > 2 else ""
-                        pos = row[3].strip() if len(row) > 3 else ""
-                        phrase = row[4].strip() if len(row) > 4 else ""
-                        rows.append([kanji, kana, trans, pos, phrase])
-                    self.data = rows
+                        rows.append([cell.strip() for cell in row])
                     self.encoding.set(enc)
+                    success = True
                     break
             except (UnicodeDecodeError, UnicodeError) as e:
-                self.data.clear()
                 last_error = e
                 continue
             except Exception as e:
                 last_error = e
                 break
-        else:
+        if not success:
             if last_error:
                 logger.error("ファイル読込エラー: %s - %s", path, last_error)
                 messagebox.showerror("読込エラー", f"{path}\n{last_error}")
             self.data.clear()
+            self.current_file = None
+            self._apply_columns(list(DEFAULT_COL_TITLES))
+            rows = []
+        if rows:
+            self._apply_columns(rows[0])
+            self.data = [r + [""] * max(0, self.num_cols - len(r)) for r in rows[1:]]
+        else:
+            self.data = []
         self._ensure_trailing_empty()
         self._saved_state = copy.deepcopy(self.data)
         self.apply_filter()
@@ -571,42 +611,43 @@ class TangoEditor:
     def save_file(self):
         if not self.current_file:
             messagebox.showwarning("警告", "ファイルが選択されていません")
-            return
+            return False
         path = os.path.join(BASE_DIR, self.current_file)
         enc = self.encoding.get()
         logger.info("ファイルを保存中: %s (encoding=%s)", self.current_file, enc)
         try:
-            rows_to_save = [row for row in self.data if any(cell.strip() for cell in row)]
+            rows_to_save = [self.column_titles]
+            rows_to_save += [row for row in self.data if any(cell.strip() for cell in row)]
             with open(path, "w", encoding=enc, newline="") as f:
                 writer = csv.writer(f)
                 writer.writerows(rows_to_save)
             self._saved_state = copy.deepcopy(self.data)
             self._update_status()
-            logger.info("保存完了: %s (%d 語)", self.current_file, len(self.data))
-            messagebox.showinfo("保存完了", f"{self.current_file}\n{len(self.data)} 語を保存しました")
+            logger.info("保存完了: %s (%d 語)", self.current_file, len(rows_to_save) - 1)
+            messagebox.showinfo("保存完了", f"{self.current_file}\n{len(rows_to_save) - 1} 語を保存しました")
+            return True
         except Exception as e:
             logger.error("保存エラー: %s", e)
             messagebox.showerror("保存エラー", str(e))
+            return False
 
     def on_close(self):
         self._destroy_edit()
         if self.dirty:
             if messagebox.askyesno("未保存", "変更が保存されていません。保存しますか？"):
-                self.save_file()
+                if not self.save_file():
+                    return
         self.root.destroy()
         logger.info("単語帳管理ツールを終了しました")
 
     # ═══════════════════════ Display ═══════════════════════
 
     def apply_filter(self):
+        self._destroy_edit()
         keyword = self.search_var.get().strip().lower()
         if keyword:
             self.filtered = [row for row in self.data
-                             if keyword in row[0].lower()
-                             or keyword in row[1].lower()
-                             or keyword in row[2].lower()
-                             or keyword in row[3].lower()
-                             or keyword in row[4].lower()]
+                             if any(keyword in cell.lower() for cell in row)]
         else:
             self.filtered = list(self.data)
         self.refresh_table()
@@ -620,7 +661,7 @@ class TangoEditor:
             if fi % 2 == 0:
                 tags.append("even")
             self.tree.insert("", tk.END, iid=str(data_idx),
-                             values=(str(fi + 1), row[0], row[1], row[2], row[3], row[4]),
+                             values=self._row_values(fi, row),
                              tags=tags)
 
     def _refresh_single_row(self, data_idx):
@@ -636,12 +677,13 @@ class TangoEditor:
         new_tags = ["row"]
         if fi % 2 == 0:
             new_tags.append("even")
-        self.tree.item(iid, values=(str(fi + 1), row[0], row[1], row[2], row[3], row[4]),
+        self.tree.item(iid, values=self._row_values(fi, row),
                        tags=new_tags)
 
     def sort_by(self, col):
-        idx = COL_MAP[col]
-        self.filtered.sort(key=lambda r: r[idx].lower(), reverse=self._sort_reverse)
+        idx = int(col[1:])
+        self.filtered.sort(key=lambda r: (r[idx] if idx < len(r) else "").lower(),
+                           reverse=self._sort_reverse)
         self._sort_reverse = not self._sort_reverse
         self.refresh_table()
 
@@ -667,12 +709,10 @@ class TangoEditor:
     def add_word(self):
         self._destroy_edit()
         data_idx = self._get_selected_data_idx()
+        if data_idx is None:
+            return
         self._push_undo()
-        if data_idx is not None:
-            self.data.insert(data_idx, ["", "", "", "", ""])
-        else:
-            self.data.append(["", "", "", "", ""])
-            data_idx = len(self.data) - 1
+        self.data.insert(data_idx, [""] * self.num_cols)
         self._ensure_trailing_empty()
         self.apply_filter()
         iid = str(data_idx)
